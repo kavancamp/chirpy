@@ -37,14 +37,13 @@ func main(){
 	cfg := apiConfig{}
 
 	//readiness endpoint 
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request){
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request){
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")
 	})
-
-	mux.HandleFunc("/metrics", cfg.readinessHandler)
-	mux.HandleFunc("/reset", cfg.resetHandler)
+	mux.HandleFunc("GET /metrics", cfg.readinessHandler)
+	mux.HandleFunc("POST /reset", cfg.resetHandler)
 
 	// File server wrapped with metrics middleware
 	fileServer := http.FileServer(http.Dir("."))
