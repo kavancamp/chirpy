@@ -1,15 +1,24 @@
 package main
 
 import (
+	"chirpy/internal/database"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync/atomic"
+
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	DB             *database.Queries
 
 }
 
@@ -42,59 +51,102 @@ func (cfg *apiConfig) adminResetHandler(w http.ResponseWriter, r *http.Request) 
 	fmt.Fprint(w, "Hits counter reset to 0\n")
 }
 
-func writeJSON(w http.ResponseWriter, data interface{}){
-	w.Header().Set("Content-Type", "application/json")
-	d, err := json.Marshal(data)
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	resp := map[string]string{"error": msg}
+	respondWithJSON(w, code, resp)
+}
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}){
+	d, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("Error marshalling JSON: %s", err)
+		log.Printf("Error marshalling response: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "Something went wrong"}`))
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
 	w.Write(d)
 }
-
+func cleanProfanity(input string) string {
+	profaneWords := []string{"kerfuffle", "sharbert", "fornax"}
+	words := strings.Split(input, " ")
+	for i, word := range words {
+		lower := strings.ToLower(word)
+		for _, profane := range profaneWords {
+			if lower == profane {
+				words[i] = "****"
+			}
+		}
+	}
+	return strings.Join(words, " ")
+}
 func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
+	type ChirpInput struct {
 		Body string `json:"body"`
 	}
-	decoder := json.NewDecoder(r.Body)
-	params := parameters{}
-	err := decoder.Decode(&params)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		writeJSON(w, map[string]string{"error": "Something went wrong"})
-		return
+	type CleanedResponse struct {
+		CleanedBody string `json:"cleaned_body"`
 	}
-	if len(params.Body) > 140 {
-		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]string{"error": "Chirp is too long"})
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	writeJSON(w, map[string]bool{"valid": true})
-}
-func main(){
-	
- 	// // Create a new ServeMux (router)
-	mux := http.NewServeMux()
-	cfg := apiConfig{}
 
+	decoder := json.NewDecoder(r.Body)
+	var input ChirpInput
+	if err := decoder.Decode(&input); err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+	if len(input.Body) > 140 {
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
+		return
+	}
+	cleaned := cleanProfanity(input.Body)
+	resp := CleanedResponse{CleanedBody: cleaned}
+	respondWithJSON(w, http.StatusOK, resp)
+}
+func main() {
+	// Load .env file
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	// Connect to DB
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer db.Close()
+	
+	dbQueries := database.New(db)
+	apiCfg := apiConfig{
+		DB: dbQueries,
+	}
+	_, err = apiCfg.DB.CreateUser(context.Background(), "test@example.com")
+	if err != nil {
+		log.Println("error creating user:", err)
+	}
+
+	mux := http.NewServeMux()
 	//readiness endpoint 
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request){
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")
 	})
-	mux.HandleFunc("GET /admin/metrics", cfg. adminMetricsHandler)
-	mux.HandleFunc("POST /admin/reset", cfg.adminResetHandler)
+	mux.HandleFunc("GET /admin/metrics", apiCfg. adminMetricsHandler)
+	mux.HandleFunc("POST /admin/reset", apiCfg.adminResetHandler)
 	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 	// File server wrapped with metrics middleware
 	fileServer := http.FileServer(http.Dir("."))
-	mux.Handle("/app/", http.StripPrefix("/app", cfg.middlewareMetricsInc(fileServer)))
+	mux.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(fileServer)))
 
 	// start the server on port 8089
-	http.ListenAndServe(":8080", mux)
+	log.Println("Server running on http://localhost:8080")
+	err = http.ListenAndServe(":8080", mux)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 }
 
