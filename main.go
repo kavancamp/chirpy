@@ -55,6 +55,8 @@ func main() {
 	mux.HandleFunc("GET /api/chirps", cfg.HandleGetChirps)
 	mux.HandleFunc("GET /api/chirps/", cfg.HandleGetChirpByID)
 	mux.HandleFunc("POST /api/login", cfg.HandleLogin)
+	mux.HandleFunc("POST /api/refresh", cfg.HandleRefresh)
+	mux.HandleFunc("POST /api/revoke", cfg.HandleRevoke)
 
 	// File server wrapped with metrics middleware
 	fileServer := http.FileServer(http.Dir("."))
