@@ -1,9 +1,12 @@
 package handlers
+
 import (
 	"encoding/json"
-	"net/http"
+
 	"log"
+	"net/http"
 	"strings"
+
 )
 
 func RespondWithError(w http.ResponseWriter, code int, msg string) {
