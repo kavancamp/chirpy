@@ -7,6 +7,10 @@ package database
 
 import (
 	"context"
+	"database/sql"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 const createUser = `-- name: CreateUser :one
@@ -57,4 +61,75 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.HashedPassword,
 	)
 	return i, err
+}
+
+const getUserFromRefreshToken = `-- name: GetUserFromRefreshToken :one
+SELECT
+  token,
+  user_id,
+  expires_at,
+  revoked_at
+FROM
+  refresh_tokens
+WHERE
+  token = $1
+`
+
+type GetUserFromRefreshTokenRow struct {
+	Token     string
+	UserID    uuid.UUID
+	ExpiresAt time.Time
+	RevokedAt sql.NullTime
+}
+
+func (q *Queries) GetUserFromRefreshToken(ctx context.Context, token string) (GetUserFromRefreshTokenRow, error) {
+	row := q.db.QueryRowContext(ctx, getUserFromRefreshToken, token)
+	var i GetUserFromRefreshTokenRow
+	err := row.Scan(
+		&i.Token,
+		&i.UserID,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const insertRefreshToken = `-- name: InsertRefreshToken :exec
+INSERT INTO refresh_tokens (
+    token,
+    user_id,
+    expires_at,
+    created_at,
+    updated_at
+) VALUES (
+    $1, $2, $3, NOW(), NOW()
+)
+`
+
+type InsertRefreshTokenParams struct {
+	Token     string
+	UserID    uuid.UUID
+	ExpiresAt time.Time
+}
+
+func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshTokenParams) error {
+	_, err := q.db.ExecContext(ctx, insertRefreshToken, arg.Token, arg.UserID, arg.ExpiresAt)
+	return err
+}
+
+const revokeRefreshToken = `-- name: RevokeRefreshToken :exec
+UPDATE refresh_tokens
+SET revoked_at = $1, updated_at = $2
+WHERE token = $3
+`
+
+type RevokeRefreshTokenParams struct {
+	RevokedAt sql.NullTime
+	UpdatedAt time.Time
+	Token     string
+}
+
+func (q *Queries) RevokeRefreshToken(ctx context.Context, arg RevokeRefreshTokenParams) error {
+	_, err := q.db.ExecContext(ctx, revokeRefreshToken, arg.RevokedAt, arg.UpdatedAt, arg.Token)
+	return err
 }
