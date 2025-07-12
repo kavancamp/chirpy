@@ -33,9 +33,11 @@ func main() {
 	defer db.Close()
 
 	dbQueries := database.New(db)
+	jwtSecret := os.Getenv("JWT_SECRET")
 	cfg := handlers.ApiConfig{
 		DB: dbQueries,
 		Platform: os.Getenv("PLATFORM"),
+		JWTSecret: jwtSecret,
 	}
 	mux := http.NewServeMux()
 	//readiness endpoint
@@ -59,7 +61,7 @@ func main() {
 	mux.Handle("/app/", http.StripPrefix("/app", cfg.MiddlewareMetricsInc(fileServer)))
 
 	// start the server on port 8089
-	log.Println("Server running on http://localhost:8080/app")
+	log.Println("Server running on http://localhost:8080")
 	err = http.ListenAndServe(":8080", mux)
 	if err != nil {
 		log.Fatal(err)
