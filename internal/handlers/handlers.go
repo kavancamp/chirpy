@@ -18,6 +18,7 @@ type ApiConfig struct {
 	fileserverHits atomic.Int32
 	DB             *database.Queries
 	Platform        string
+	JWTSecret string
 }
 
 type User struct {
@@ -111,50 +112,61 @@ func (cfg *ApiConfig) HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 func (cfg *ApiConfig) HandleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	type ChirpInput struct {
 		Body string `json:"body"`
-		UserID uuid.UUID `json:"user_id"`
 	}
-	type ChirpResponse struct {
-		ID        uuid.UUID `json:"id"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-		Body     string    `json:"body"`
-		UserID uuid.UUID	`json:"user_id"`
-	}
+
 	var input ChirpInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 	if len(input.Body) > 140 {
-		RespondWithError(w, http.StatusBadRequest, "Body is required")
+		RespondWithError(w, http.StatusBadRequest, "Chirp is too long")
 		return
 	}
+
+	tokenStr, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		RespondWithError(w, http.StatusUnauthorized, "Missing or invalid token")
+		return
+	}
+
+	userID, err := auth.ValidateJWT(tokenStr, cfg.JWTSecret)
+	if err != nil {
+		RespondWithError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+
 	body := CleanProfanity(input.Body)
 	now := time.Now().UTC()
 	id := uuid.New()
 
 	dbChirp, err := cfg.DB.CreateChirp(r.Context(), database.CreateChirpParams{
-		ID: id,
+		ID:        id,
 		CreatedAt: now,
 		UpdatedAt: now,
-		Body: body,
-		UserID: input.UserID,
+		Body:      body,
+		UserID:    userID,
 	})
 	if err != nil {
 		log.Printf("error creating chirp: %s", err)
 		RespondWithError(w, http.StatusInternalServerError, "Could not create chirp")
 		return
 	}
-
-	resp := ChirpResponse {
-		ID: dbChirp.ID,
+	type ChirpResponse struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+	RespondWithJSON(w, http.StatusCreated, ChirpResponse{
+		ID:        dbChirp.ID,
 		CreatedAt: dbChirp.CreatedAt,
 		UpdatedAt: dbChirp.UpdatedAt,
-		Body: dbChirp.Body,
-		UserID: dbChirp.UserID,
+		Body:      dbChirp.Body,
+		UserID:    dbChirp.UserID,
+	})
 	}
-	RespondWithJSON(w, http.StatusCreated, resp)
-}
 
 func (cfg *ApiConfig) HandleGetChirps(w http.ResponseWriter, r *http.Request) {
 	chirps, err := cfg.DB.GetChirps(r.Context())
@@ -200,7 +212,7 @@ func (cfg *ApiConfig) HandleGetChirpByID(w http.ResponseWriter, r *http.Request)
 		RespondWithError(w, http.StatusNotFound, "chirp not found")
 		return
 	}
-// Map to output struct with correct JSON field names
+	// Map to output struct with correct JSON field names
 	type Chirp struct {
 		ID        uuid.UUID `json:"id"`
 		CreatedAt time.Time `json:"created_at"`
@@ -220,24 +232,44 @@ func (cfg *ApiConfig) HandleGetChirpByID(w http.ResponseWriter, r *http.Request)
 }
 
 func (cfg *ApiConfig) HandleLogin(w http.ResponseWriter, r *http.Request) {
-	type loginInput struct {
-		Email string `json:"email"`
-		Password string `json:"password"`
+	type requestBody struct {
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		ExpiresInSeconds int    `json:"expires_in_seconds"`
 	}
-	var input loginInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Invalid login")
+
+	var body requestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		RespondWithError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	user, err := cfg.DB.GetUserByEmail(r.Context(), input.Email)
-	if err != nil || auth.CheckPasswordHash(input.Password, user.HashedPassword) != nil {
-	RespondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
-	return
+
+	dbUser, err := cfg.DB.GetUserByEmail(r.Context(), body.Email)
+	if err != nil {
+		RespondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
 	}
-	RespondWithJSON(w, http.StatusOK, User{
-		ID:        user.ID,
-		Email:     user.Email,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+
+	if err := auth.CheckPasswordHash(body.Password, dbUser.HashedPassword); err != nil {
+		RespondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	expires := time.Hour
+	if body.ExpiresInSeconds > 0 && body.ExpiresInSeconds <= 3600 {
+		expires = time.Duration(body.ExpiresInSeconds) * time.Second
+	}
+
+	token, err := auth.MakeJWT(dbUser.ID, cfg.JWTSecret, expires)
+	if err != nil {
+		RespondWithError(w, http.StatusInternalServerError, "Failed to create token")
+		return
+	}
+	RespondWithJSON(w, http.StatusOK, map[string]interface{}{
+		"id":         dbUser.ID,
+		"email":      dbUser.Email,
+		"created_at": dbUser.CreatedAt,
+		"updated_at": dbUser.UpdatedAt,
+		"token":      token,
 	})
 }
