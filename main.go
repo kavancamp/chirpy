@@ -33,11 +33,11 @@ func main() {
 	defer db.Close()
 
 	dbQueries := database.New(db)
-	jwtSecret := os.Getenv("JWT_SECRET")
 	cfg := handlers.ApiConfig{
 		DB: dbQueries,
 		Platform: os.Getenv("PLATFORM"),
-		JWTSecret: jwtSecret,
+		JWTSecret: os.Getenv("JWT_SECRET"),
+		PolkaKey: os.Getenv("POLKA_KEY"), 
 	}
 	mux := http.NewServeMux()
 	//readiness endpoint
@@ -50,14 +50,17 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", cfg.AdminMetricsHandler)
 	mux.HandleFunc("POST /admin/reset", cfg.AdminResetHandler)
 	mux.HandleFunc("POST /api/users", cfg.HandleCreateUser)
-
+	mux.HandleFunc("PUT /api/users", cfg.HandleUpdateUser)
 	mux.HandleFunc("POST /api/chirps", cfg.HandleCreateChirp)
 	mux.HandleFunc("GET /api/chirps", cfg.HandleGetChirps)
 	mux.HandleFunc("GET /api/chirps/", cfg.HandleGetChirpByID)
+	mux.HandleFunc("DELETE /api/chirps/", cfg.HandleDeleteChirp)
 	mux.HandleFunc("POST /api/login", cfg.HandleLogin)
 	mux.HandleFunc("POST /api/refresh", cfg.HandleRefresh)
 	mux.HandleFunc("POST /api/revoke", cfg.HandleRevoke)
+	mux.HandleFunc("POST /api/polka/webhooks", cfg.HandlePolkaWebhook)
 
+	
 	// File server wrapped with metrics middleware
 	fileServer := http.FileServer(http.Dir("."))
 	mux.Handle("/app/", http.StripPrefix("/app", cfg.MiddlewareMetricsInc(fileServer)))
