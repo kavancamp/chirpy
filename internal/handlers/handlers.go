@@ -18,7 +18,8 @@ type ApiConfig struct {
 	fileserverHits atomic.Int32
 	DB             *database.Queries
 	Platform        string
-	JWTSecret string
+	JWTSecret 		string
+	PolkaKey		string
 }
 
 type User struct {
@@ -26,6 +27,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 func (cfg *ApiConfig) MiddlewareMetricsInc(next http.Handler) http.Handler {
@@ -105,6 +107,61 @@ func (cfg *ApiConfig) HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: dbUser.CreatedAt,
 		UpdatedAt: dbUser.UpdatedAt,
 		Email: dbUser.Email,
+		IsChirpyRed: dbUser.IsChirpyRed,
 	}
 	RespondWithJSON(w, http.StatusCreated, user)
+}
+func (cfg *ApiConfig) HandleUpdateUser(w http.ResponseWriter, r *http.Request){
+	// extract and validate jwt
+	tokenStr, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		RespondWithError(w, http.StatusUnauthorized, "Misssing or invalid token")
+		return
+	}
+
+	userID, err := auth.ValidateJWT(tokenStr, cfg.JWTSecret)
+	if err != nil {
+		RespondWithError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+	//parse request body
+	type requestBody struct {
+		Email string `json:"email"`
+		Password string `json:"password"`
+	}
+	var input requestBody
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.Password) == "" {
+		RespondWithError(w, http.StatusBadRequest, "Email and password required")
+		return
+	}
+	//new hashed password
+
+	hashedPassword, err := auth.HashPassword(input.Password)
+	if err != nil {
+		RespondWithError(w, http.StatusInternalServerError, "Failed to hash password")
+		return
+	}
+	// update user in db
+	updatedUser, err := cfg.DB.UpdateUser(r.Context(), database.UpdateUserParams {
+		ID: userID,
+		Email: input.Email,
+		HashedPassword: hashedPassword,
+	})
+	if err != nil {
+		RespondWithError(w, http.StatusInternalServerError, "Failed to update user")
+		return
+	}
+	//return updated user without pword
+	userResp := User{
+		ID: updatedUser.ID,
+		CreatedAt: updatedUser.CreatedAt,
+		UpdatedAt: updatedUser.UpdatedAt,
+		Email: updatedUser.Email,
+		IsChirpyRed: updatedUser.IsChirpyRed,
+	}
+	RespondWithJSON(w, http.StatusOK, userResp)
 }
