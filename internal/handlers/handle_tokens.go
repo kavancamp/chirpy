@@ -70,6 +70,7 @@ func (cfg *ApiConfig) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		"updated_at":    dbUser.UpdatedAt,
 		"token":         accessToken,
 		"refresh_token": refreshToken,
+		"is_chirpy_red": dbUser.IsChirpyRed,
 	})
 }
 
