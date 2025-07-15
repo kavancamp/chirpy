@@ -35,3 +35,14 @@ WHERE
 UPDATE refresh_tokens
 SET revoked_at = $1, updated_at = $2
 WHERE token = $3;
+
+-- name: UpdateUser :one
+UPDATE users
+SET email = $2,
+    hashed_password = $3,
+    updated_at =  NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpgradeUserToChirpyRed :exec
+UPDATE users SET is_chirpy_red = TRUE, updated_at = NOW() WHERE id = $1;
